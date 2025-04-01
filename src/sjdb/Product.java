@@ -11,7 +11,9 @@ public class Product extends BinaryOperator {
 	 * @param left Left child operator
 	 * @param right Right child operator
 	 */
+	// java的子类继承父类/爷类的属性和所有非私有成员
 	public Product(Operator left, Operator right) {
+		// 这里的super是调用父类的构造函数
 		super(left, right);
 	}
 	

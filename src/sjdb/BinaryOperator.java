@@ -14,7 +14,12 @@ public abstract class BinaryOperator extends Operator {
 	 * Create a new binary operator
 	 */
 	public BinaryOperator(Operator left, Operator right) {
+		// 先调用父类的构造函数，初始化inputs list
+//		public Operator() {
+//			this.inputs = new ArrayList<Operator>();
+//		}
 		super();
+		// 然后给这个list添加两个Operator
 		this.inputs.add(left);
 		this.inputs.add(right);
 	}

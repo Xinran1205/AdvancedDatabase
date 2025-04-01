@@ -18,6 +18,8 @@ public class Scan extends Operator {
 	 * Create a new scan of a given named relation
 	 * @param relation Named relation to be scanned
 	 */
+	// 初始化函数
+	// 这个里面其实已经写好了scan的visit函数，estimator里面可以不写。
 	public Scan(NamedRelation relation) {
 		this.relation = relation;
 		this.output = new Relation(relation.getTupleCount());

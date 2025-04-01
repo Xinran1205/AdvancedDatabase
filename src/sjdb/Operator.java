@@ -23,7 +23,9 @@ public abstract class Operator {
 	 * The relation produced by this operator as output.
 	 */
 	protected Relation output;
-	
+
+	// 构造函数，初始化一个空的inputs list
+	// 在子类（unaryOperator和binaryOperator）中会初始化这个inputs list
 	public Operator() {
 		this.inputs = new ArrayList<Operator>();
 	}
