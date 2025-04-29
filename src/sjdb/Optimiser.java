@@ -2,6 +2,7 @@
 package sjdb;
 
 import java.util.*;
+import java.util.function.BiConsumer;
 
 public class Optimiser {
 
@@ -10,21 +11,66 @@ public class Optimiser {
     public Optimiser(Catalogue cat) {}
 
     public Operator optimise(Operator canonical) {
-
-        /* ── 拆掉顶层 Project ── */
+        /* ── 0. 拆掉顶层 Project ── */
         List<Attribute> topProj = null;
         if (canonical instanceof Project) {
             topProj  = ((Project) canonical).getAttributes();
             canonical = ((Project) canonical).getInput();
         }
 
-        /* ── 收集 Scan 与谓词 ── */
+        /* ── 1. 收集 Scan 与谓词 ── */
         Info info = new Info();
         collect(canonical, info);
 
-        /* ── base map: 表名 → Scan ── */
+        /* ── 2. 若不是 SELECT * ，计算每表需要的列 ── */
+        boolean starSelect = (topProj == null);               // SELECT * ?
+        Map<String, Set<Attribute>> need = new HashMap<>();   // rel → attrs
+
+        if (!starSelect) {
+            // 想用的助手
+            BiConsumer<Attribute,Void> add = (attr, v) -> {
+                for (Scan s : info.scans)
+                    if (hasAttr(s.getRelation(), attr)) {
+                        need.computeIfAbsent(s.getRelation().toString(),
+                                        k -> new LinkedHashSet<>())
+                                .add(attr);
+                        break;
+                    }
+            };
+
+            // 2.1 顶层投影
+            for (Attribute a : topProj) add.accept(a,null);
+            // 2.2 所有谓词
+            for (Predicate p : info.eqPreds) {
+                add.accept(p.getLeftAttribute(),null);
+                add.accept(p.getRightAttribute(),null);
+            }
+            for (Predicate p : info.restPreds) {
+                add.accept(p.getLeftAttribute(),null);
+            }
+        }
+
+        /* ── 3. 构造 base map，并在 Scan 上方插 Project(裁列) ── */
         Map<String,Operator> base = new LinkedHashMap<>();
-        for (Scan s : info.scans) base.put(s.getRelation().toString(), s);
+        for (Scan s : info.scans) {
+            String rel = s.getRelation().toString();
+            Operator op = s;
+
+            if (!starSelect) {
+                Set<Attribute> keep = need.get(rel);
+                if (keep != null &&
+                        keep.size() < s.getRelation().getAttributes().size()) {
+
+                    // 维持列顺序：按 catalogue 中出现的先后
+                    List<Attribute> ordered = new ArrayList<>();
+                    for (Attribute a : s.getRelation().getAttributes())
+                        if (keep.contains(a)) ordered.add(a);
+
+                    op = new Project(s, ordered);   // 列裁剪
+                }
+            }
+            base.put(rel, op);
+        }
 
         /* ── 起点：行数最小的 Scan ── */
         Operator leftTree = pickMinScan(base);
