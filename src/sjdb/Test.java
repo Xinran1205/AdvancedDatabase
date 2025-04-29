@@ -25,6 +25,8 @@ public class Test {
 		// Project是根节点，从Project.accept(estimator)开始，
 		// 向上走到Operator.accept(estimator)然后递归调用子节点的accept(estimator)
 		plan.accept(estimator);           // 第一次遍历：估算代价
+		// 第一次遍历，把output的代价都算出来了，放到output属性里了
+		// 第二次只是打印output和一些其他属性
 		plan.accept(inspector);           // 第二次遍历：打印计划信息
 
 		// 看看优化过后的结果！

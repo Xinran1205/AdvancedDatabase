@@ -32,7 +32,8 @@ public class Project extends UnaryOperator {
 	 * @see sjdb.UnaryOperator#accept(sjdb.OperatorVisitor)
 	 */
 	public void accept(PlanVisitor visitor) {
-		// depth-first traversal - accept the 
+		// depth-first traversal - accept the
+		// 他这个super意思是反过来的，父类其实是孩子节点
 		super.accept(visitor);
 		visitor.visit(this);
 	}

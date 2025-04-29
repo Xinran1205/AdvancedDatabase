@@ -56,7 +56,7 @@ public class Test2 {
      *
      *   SELECT a2 = b3 AND b2 = c1 AND a1 = "const"
      *   FROM A, B, C
-     *   PROJECT [a2, b1, c2]
+     *   PROJECT [a2, b1, c1]
      *
      * 其中：
      *   - 第一个选择：a2 = b3（连接关系 A 和 B）
@@ -65,7 +65,7 @@ public class Test2 {
      *
      * 构造的树结构（自底向上）：
      *
-     *               Project [a2, b1, c2]
+     *               Project [a2, b1, c1]
      *                         |
      *                 Select [a1 = "const"]
      *                         |
@@ -98,11 +98,11 @@ public class Test2 {
         // 第三个 Select：选择谓词 a1 = "const"（常量选择，作用于 A）
         Select select3 = new Select(select2, new Predicate(new Attribute("a1"), "const"));
 
-        // 最后构造 Project 操作，仅保留属性 [a2, b1, c2]
+        // 最后构造 Project 操作，仅保留属性 [a2, b1, c1]
         ArrayList<Attribute> projAttrs = new ArrayList<Attribute>();
         projAttrs.add(new Attribute("a2"));
         projAttrs.add(new Attribute("b1"));
-        projAttrs.add(new Attribute("c2"));
+        projAttrs.add(new Attribute("c1"));
         Project project = new Project(select3, projAttrs);
 
         return project;
