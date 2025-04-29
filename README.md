@@ -147,4 +147,84 @@ public class Optimiser {
 - **贪婪 + 前瞻**  
   结合局部贪心与一阶 look-ahead，平衡效率与效果  
 
+### 5. 示例：q5.txt
+
+**表结构示例**  
+```text
+Person:400:persid,400:persname,350:age,47  
+Project:40:projid,40:projname,35:dept,5  
+Department:5:deptid,5:deptname,5:manager,5  
+格式：表名:行数:列名1,distinct1:列名2,distinct2:…
+```
+
+含义举例：
+
+Person:400:persid,400:persname,350:age,47
+
+- Person 表共 400 条记录  
+- 属性 persid 有 400 个不同值  
+- 属性 persname 有 350 个不同值  
+- 属性 age 有 47 个不同值
+
+查询示例
+
+```sql
+SELECT projname, deptname
+FROM Person, Project, Department
+WHERE persid=manager, dept=deptid, persname="Smith"
+```
+
+Canonical 执行计划（未优化）
+
+```ruby
+-- canonical --
+Person
+  in:  Person:400:persid,400:persname,350:age,47
+  out: 400:persid,400:persname,350:age,47
+Project
+  in:  Project:40:projid,40:projname,35:dept,5
+  out: 40:projid,40:projname,35:dept,5
+(Person) TIMES (Project)
+  inl: 400:persid,400:persname,350:age,47
+  inr: 40:projid,40:projname,35:dept,5
+  out: 16000:persid,400:persname,350:age,47:projid,40:projname,35:dept,5
+Department
+  in:  Department:5:deptid,5:deptname,5:manager,5
+  out: 5:deptid,5:deptname,5:manager,5
+((Person) TIMES (Project)) TIMES (Department)
+  inl: 16000:…
+  inr: 5:…
+  out: 80000:…
+SELECT [persid=manager] …
+SELECT [dept=deptid] …
+SELECT [persname="Smith"] …
+PROJECT [projname,deptname] …
+```
+
+Join-rewritten 执行计划（优化后）
+
+```ruby
+-- join-rewritten --
+Department
+  in:  Department:5:deptid,5:deptname,5:manager,5
+  out: 5:deptid,5:deptname,5:manager,5
+Project
+  in:  Project:40:projid,40:projname,35:dept,5
+  out: 40:projid,40:projname,35:dept,5
+PROJECT [projname,dept] (Project)
+…
+(Department) JOIN [dept=deptid] (…)
+Person
+…
+((Department) JOIN …) JOIN [persid=manager] (…)
+PROJECT [projname,deptname] (…)
+```
+
+简单说明
+
+在 Canonical 阶段，三张表直接做笛卡尔积，效率低且中间结果巨大。
+
+在 Join-rewritten 阶段，优化器先下推常量谓词 persname="Smith"并下推投影（过滤列）再执行join Project ▷◁ Department（利用 dept=deptid），再join Person（利用 persid=manager），显著减少中间行数。
+
+
 
