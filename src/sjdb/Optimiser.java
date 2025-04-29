@@ -1,148 +1,150 @@
-/*  sjdb/Optimiser.java   –  JDK-8 兼容，仅做“Project+Department先连” */
-
+/*  sjdb/Optimiser.java  –  greedy join by input-product first  */
 package sjdb;
 
 import java.util.*;
 
-/**
- * Minimal, hard-wired optimiser.
- * 功能：
- *   1. 如果 FROM 同时包含 Project 与 Department，
- *      则左深树最左端固定为  (Project JOIN Department)。
- *   2. 其余表按 FROM 原顺序依次接到左深树上。
- *   3. 只有 attr = attr 的谓词会生成 JOIN；其它谓词保持为 SELECT。
- *   4. 顶层 Project（若有）原样包回，语义完全一致。
- */
 public class Optimiser {
 
     private final Estimator est = new Estimator();
 
-    public Optimiser(Catalogue cat) { }
+    public Optimiser(Catalogue cat) {}
 
-    /* ==============================================================
-       public 入口
-       ============================================================== */
     public Operator optimise(Operator canonical) {
 
-        /* ─── 去掉顶层 Project（若有） ─── */
-        List<Attribute> topProject = null;
+        /* ── 拆掉顶层 Project ── */
+        List<Attribute> topProj = null;
         if (canonical instanceof Project) {
-            topProject = ((Project) canonical).getAttributes();
-            canonical  = ((Project) canonical).getInput();
+            topProj  = ((Project) canonical).getAttributes();
+            canonical = ((Project) canonical).getInput();
         }
 
-        /* ─── 收集 scan / 谓词 ─── */
+        /* ── 收集 Scan 与谓词 ── */
         Info info = new Info();
         collect(canonical, info);
 
-        /* ─── 写死顺序：Project + Department 放最左 ─── */
-        List<Scan> ordered = new ArrayList<Scan>();
+        /* ── base map: 表名 → Scan ── */
+        Map<String,Operator> base = new LinkedHashMap<>();
+        for (Scan s : info.scans) base.put(s.getRelation().toString(), s);
 
-        Scan scanProj = info.scanByName.get("Project");
-        Scan scanDept = info.scanByName.get("Department");
-        if (scanProj != null && scanDept != null) {
-            ordered.add(scanProj);
-            ordered.add(scanDept);
-            info.scans.remove(scanProj);
-            info.scans.remove(scanDept);
+        /* ── 起点：行数最小的 Scan ── */
+        Operator leftTree = pickMinScan(base);
+        Set<String> joined = new HashSet<>();
+        joined.add(scanName(leftTree));
+
+        /* ── 贪婪地把其余表接到左边 ── */
+        while (joined.size() < base.size()) {
+
+            JoinChoice best = null;
+
+            for (String rel : base.keySet()) if (!joined.contains(rel)) {
+
+                Operator right = base.get(rel);
+                Predicate pred = peekPred(leftTree, right, info.eqPreds);
+
+                Operator cand = (pred == null)
+                        ? new Product(leftTree, right)
+                        : new Join   (leftTree, right, pred);
+
+                cand.accept(est);
+                int outRows = cand.getOutput().getTupleCount();
+                int leftRows  = leftTree.getOutput().getTupleCount();
+                int rightRows = right    .getOutput().getTupleCount();
+                long inProduct = (long) leftRows * rightRows;
+
+                if (best == null ||
+                        inProduct <  best.inProd ||
+                        (inProduct == best.inProd && outRows < best.outRows))
+                    best = new JoinChoice(rel, cand, pred, inProduct, outRows);
+            }
+
+            /* 用掉已选谓词 */
+            if (best.pred != null) info.eqPreds.remove(best.pred);
+
+            leftTree = best.plan;
+            joined.add(best.rel);
         }
-        /* 剩余表保持原 FROM 顺序 */
-        ordered.addAll(info.scans);
 
-        /* ─── 构造左深树，同时把对应谓词做成 JOIN ─── */
-        Operator leftTree = ordered.get(0);
-
-        for (int i = 1; i < ordered.size(); i++) {
-            Scan next = ordered.get(i);
-            Predicate pred = findEqPred(leftTree, next, info.eqPreds);
-
-            if (pred != null)
-                leftTree = new Join(leftTree, next, pred);
-            else
-                leftTree = new Product(leftTree, next);
-        }
-
-        /* ─── 其余谓词包回 Select ─── */
-        for (Predicate p : info.otherPreds)
+        /* ── 剩余谓词作为 Select ── */
+        for (Predicate p : info.restPreds)
             leftTree = new Select(leftTree, p);
 
-        /* ─── 还原顶层 Project ─── */
-        return (topProject == null) ? leftTree
-                : new Project(leftTree, topProject);
+        return (topProj == null) ? leftTree
+                : new Project(leftTree, topProj);
     }
 
-    /* ==============================================================
-       内部结构：收集 plan 信息
-       ============================================================== */
+    /* ====== 收集阶段 ====== */
     private static class Info {
-        final List<Scan> scans       = new ArrayList<Scan>();          // FROM 顺序
-        final Map<String, Scan> scanByName = new HashMap<String, Scan>(); // 表名→Scan
-        final List<Predicate> eqPreds  = new ArrayList<Predicate>();   // attr = attr
-        final List<Predicate> otherPreds = new ArrayList<Predicate>(); // 常量等
+        final List<Scan> scans = new ArrayList<>();
+        final List<Predicate> eqPreds   = new ArrayList<>();
+        final List<Predicate> restPreds = new ArrayList<>();
     }
 
     private void collect(Operator op, Info I) {
         if (op instanceof Scan) {
-            Scan s = (Scan) op;
-            I.scans.add(s);
-            I.scanByName.put(s.getRelation().toString(), s);
-        }
-        else if (op instanceof Select) {
+            I.scans.add((Scan) op);
+        } else if (op instanceof Select) {
             Predicate p = ((Select) op).getPredicate();
-            if (p.equalsValue()) I.otherPreds.add(p);
-            else                 I.eqPreds.add(p);
+            if (p.equalsValue()) I.restPreds.add(p);
+            else                 I.eqPreds  .add(p);
             collect(((Select) op).getInput(), I);
-        }
-        else if (op instanceof Project)
+        } else if (op instanceof Project) {
             collect(((Project) op).getInput(), I);
-        else if (op instanceof BinaryOperator) {
+        } else if (op instanceof BinaryOperator) {
             collect(((BinaryOperator) op).getLeft(),  I);
             collect(((BinaryOperator) op).getRight(), I);
         }
     }
 
-    /* ==============================================================
-       在 eqPreds 中找一条能把 leftTree 与 next 连接起来的谓词
-       ============================================================== */
-    private Predicate findEqPred(Operator leftTree, Scan next,
-                                 List<Predicate> eqPreds) {
-
-        for (Iterator<Predicate> it = eqPreds.iterator(); it.hasNext();) {
-            Predicate p = it.next();
-            Attribute a1 = p.getLeftAttribute(),  a2 = p.getRightAttribute();
-
-            boolean inLeft = attrInTree(leftTree, a1) || attrInTree(leftTree, a2);
-            boolean inNext = attrInScan(next,  a1)   || attrInScan(next,  a2);
-
-            if (inLeft && inNext) {
-                it.remove();           // 用掉这条谓词
-                return p;
-            }
-        }
+    /* ====== 找到一条连接 left/right 的谓词（只窥视不删除） ====== */
+    private Predicate peekPred(Operator L, Operator R, List<Predicate> list){
+        for (Predicate p : list)
+            if (connects(L,R,p)) return p;
         return null;
     }
 
-    /* ==============================================================
-       辅助：列归属判断
-       ============================================================== */
-    private boolean attrInScan(Scan s, Attribute x) {
-        if (x == null) return false;
-        for (Attribute a : s.getRelation().getAttributes())
+    private boolean connects(Operator L, Operator R, Predicate p){
+        Attribute a = p.getLeftAttribute(), b = p.getRightAttribute();
+        return (belongs(L,a)&&belongs(R,b)) || (belongs(L,b)&&belongs(R,a));
+    }
+
+    private boolean belongs(Operator tree, Attribute x){
+        if (tree instanceof Scan) return hasAttr(((Scan)tree).getRelation(),x);
+        if (tree instanceof Select)  return belongs(((Select) tree).getInput(), x);
+        if (tree instanceof Project) return belongs(((Project)tree).getInput(), x);
+        if (tree instanceof BinaryOperator)
+            return belongs(((BinaryOperator) tree).getLeft(),x) ||
+                    belongs(((BinaryOperator) tree).getRight(),x);
+        return false;
+    }
+    private boolean hasAttr(Relation r, Attribute x){
+        for (Attribute a : r.getAttributes())
             if (a.equals(x)) return true;
         return false;
     }
 
-    private boolean attrInTree(Operator op, Attribute x) {
-        if (x == null) return false;
+    /* ====== 选最小 Scan 作为根 ====== */
+    private Operator pickMinScan(Map<String,Operator> base){
+        Operator best=null; int min=Integer.MAX_VALUE;
+        for (Operator op:base.values()){
+            op.accept(est);
+            int n=op.getOutput().getTupleCount();
+            if (n<min){min=n; best=op;}
+        }
+        return best;
+    }
+    private String scanName(Operator op){
+        if (op instanceof Scan) return ((Scan)op).getRelation().toString();
+        if (op instanceof Select)  return scanName(((Select) op).getInput());
+        if (op instanceof Project) return scanName(((Project)op).getInput());
+        throw new IllegalStateException();
+    }
 
-        if (op instanceof Scan) return attrInScan((Scan) op, x);
-
-        if (op instanceof BinaryOperator)
-            return attrInTree(((BinaryOperator) op).getLeft(),  x) ||
-                    attrInTree(((BinaryOperator) op).getRight(), x);
-
-        if (op instanceof Select)  return attrInTree(((Select)  op).getInput(), x);
-        if (op instanceof Project) return attrInTree(((Project) op).getInput(), x);
-        return false;
+    /* ====== 保存一次备选结果 ====== */
+    private static class JoinChoice{
+        final String rel; final Operator plan; final Predicate pred;
+        final long inProd; final long outRows;
+        JoinChoice(String r,Operator p,Predicate pr,long in,long out){
+            rel=r; plan=p; pred=pr; inProd=in; outRows=out;
+        }
     }
 }
