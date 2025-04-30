@@ -59,7 +59,6 @@ public class Estimator implements PlanVisitor {
 				));
 			}
 
-			// TODO 要删掉这个逻辑
 			// 那个relation里面已经实现了
 			// 3.3 如果找到了，就获取 distinct 值并做常规处理
 			int distinct = found.getValueCount();
